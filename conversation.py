@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
 
 from openai import OpenAI
@@ -28,6 +29,11 @@ TOPIC_KEYWORDS = {
 }
 POSITIVE_PROGRESS_WORDS = {"got it", "understood", "understand", "solved", "worked", "thanks"}
 
+MODEL_PRICING_PER_1M_TOKENS = {
+    "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+    "gpt-4.1": {"input": 2.00, "output": 8.00},
+}
+
 
 @dataclass
 class StudentProgress:
@@ -54,10 +60,66 @@ class StudentProgress:
 
 
 @dataclass
+class UsageEvent:
+    timestamp_utc: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+
+
+@dataclass
+class UsageStats:
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_estimated_cost_usd: float = 0.0
+    call_count: int = 0
+    recent_events: List[UsageEvent] = field(default_factory=list)
+
+    def record(self, model: str, input_tokens: int, output_tokens: int, estimated_cost_usd: float) -> None:
+        self.total_input_tokens += input_tokens
+        self.total_output_tokens += output_tokens
+        self.total_estimated_cost_usd += estimated_cost_usd
+        self.call_count += 1
+
+        event = UsageEvent(
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+        self.recent_events.append(event)
+        self.recent_events = self.recent_events[-25:]
+
+
+@dataclass
 class ConversationState:
     summary: str = ""
     messages: List[Dict[str, Any]] = field(default_factory=list)
     progress: StudentProgress = field(default_factory=StudentProgress)
+    usage: UsageStats = field(default_factory=UsageStats)
+
+
+def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    pricing = MODEL_PRICING_PER_1M_TOKENS.get(model)
+    if pricing is None:
+        return 0.0
+
+    input_cost = (input_tokens / 1_000_000) * pricing["input"]
+    output_cost = (output_tokens / 1_000_000) * pricing["output"]
+    return input_cost + output_cost
+
+
+def record_usage_from_response(usage: UsageStats, model: str, response: Any) -> None:
+    response_usage = getattr(response, "usage", None)
+    if response_usage is None:
+        return
+
+    input_tokens = int(getattr(response_usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(response_usage, "output_tokens", 0) or 0)
+    estimated_cost = estimate_cost_usd(model, input_tokens, output_tokens)
+    usage.record(model, input_tokens, output_tokens, estimated_cost)
 
 
 def load_api_key_text(key_path) -> str:
@@ -98,6 +160,7 @@ def build_context_messages(state: ConversationState) -> List[Dict[str, Any]]:
 
 def ask_chatbot(client: OpenAI, state: ConversationState, model: str) -> str:
     response = client.responses.create(model=model, input=build_context_messages(state))
+    record_usage_from_response(state.usage, model, response)
     return response.output_text.strip()
 
 
@@ -110,18 +173,17 @@ def infer_topic(text: str) -> str:
 
 
 def update_progress(progress: StudentProgress, user_input: str) -> None:
-    progress.questions_asked += 1
     progress.current_topic = infer_topic(user_input)
     progress.topics_covered[progress.current_topic] = progress.topics_covered.get(progress.current_topic, 0) + 1
 
-    lowered = user_input.lower()
-    if any(phrase in lowered for phrase in POSITIVE_PROGRESS_WORDS):
-        progress.confirmations += 1
-    if any(word in lowered for word in ["confused", "stuck", "help", "error", "doesn't work", "does not work"]):
-        progress.struggle_signals += 1
 
-
-def summarize_messages(client: OpenAI, model: str, old_messages: Iterable[Dict[str, Any]], existing_summary: str) -> str:
+def summarize_messages(
+    client: OpenAI,
+    model: str,
+    old_messages: Iterable[Dict[str, Any]],
+    existing_summary: str,
+    usage: UsageStats,
+) -> str:
     lines = []
     if existing_summary:
         lines.append(f"Previous memory: {existing_summary}")
@@ -143,6 +205,7 @@ def summarize_messages(client: OpenAI, model: str, old_messages: Iterable[Dict[s
         model=model,
         input=[{"role": "user", "content": prompt}],
     )
+    record_usage_from_response(usage, model, response)
     return response.output_text.strip()
 
 
@@ -156,7 +219,7 @@ def trim_memory(client: OpenAI, state: ConversationState, model: str) -> None:
         return
 
     try:
-        state.summary = summarize_messages(client, model, old_messages, state.summary)
+        state.summary = summarize_messages(client, model, old_messages, state.summary, state.usage)
     except Exception:
         fallback_bits = []
         if state.summary:
