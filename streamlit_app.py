@@ -10,7 +10,6 @@ from code_evaluator import EvaluationCase, QuizExercise
 from conversation import (
     DEFAULT_MODEL,
     build_client,
-    load_api_key_text,
     new_conversation,
     record_usage_from_response,
     submit_user_message,
@@ -53,6 +52,24 @@ def is_practice_request(text: str) -> bool:
 
 def append_message(role: str, content: str) -> None:
     st.session_state.messages.messages.append({"role": role, "content": content})
+
+
+def resolve_api_key() -> str:
+    env_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    try:
+        secret_key = str(st.secrets.get("OPENAI_API_KEY", "")).strip()
+    except Exception:
+        secret_key = ""
+
+    if secret_key:
+        return secret_key
+
+    raise RuntimeError(
+        "Missing OpenAI API key. Set OPENAI_API_KEY in environment variables or Streamlit secrets."
+    )
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -225,7 +242,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = new_conversation()
 
 if "client" not in st.session_state:
-    api_key = load_api_key_text(Path(__file__).with_name("tutor_key.txt"))
+    api_key = resolve_api_key()
     st.session_state.client = build_client(api_key)
 
 if "practice_mode" not in st.session_state:

@@ -1,18 +1,26 @@
 import os
-from pathlib import Path
 
 from conversation import (
     DEFAULT_MODEL,
     build_client,
-    load_api_key_text,
     new_conversation,
     submit_user_message,
 )
 
 
+def resolve_api_key() -> str:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if api_key:
+        return api_key
+
+    raise RuntimeError(
+        "Missing OpenAI API key. Set OPENAI_API_KEY in your environment before running chatbot.py."
+    )
+
+
 def main() -> None:
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
-    api_key = load_api_key_text(Path(__file__).with_name("tutor_key.txt"))
+    api_key = resolve_api_key()
     client = build_client(api_key)
     state = new_conversation()
 

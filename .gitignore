@@ -3,3 +3,4 @@ tutor_key.txt
 .venv/
 __pycache__/
 *.pyc
+streamlit/
