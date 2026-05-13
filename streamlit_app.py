@@ -233,6 +233,98 @@ def get_code_fix_suggestions(client, model: str, exercise, student_code: str, re
 
 st.set_page_config(page_title="Tutor Chatbot", page_icon="🤖", layout="centered")
 
+# Custom styling for light teal background and moon silver accents
+st.markdown("""
+<style>
+    [data-testid="stAppViewContainer"] {
+        background-color: #e0f7f6;
+    }
+    [data-testid="stSidebar"] {
+        background-color: #d0d8e0;
+    }
+    .stTextArea textarea {
+        font-family: 'Courier New', monospace;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# JavaScript for tab key support (2 spaces) and automatic indentation
+st.markdown("""
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const textareas = document.querySelectorAll('textarea');
+    textareas.forEach(textarea => {
+        textarea.addEventListener('keydown', function(e) {
+            const TAB = '  '; // 2 spaces for tab
+            
+            // Handle Tab key
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
+                const value = this.value;
+                const beforeTab = value.substring(0, start);
+                const afterTab = value.substring(end);
+                
+                // Handle selection (indent/outdent block)
+                if (start !== end) {
+                    const selectedText = value.substring(start, end);
+                    if (e.shiftKey) {
+                        // Shift+Tab: outdent
+                        const outdented = selectedText.split('\\n').map(line => 
+                            line.startsWith(TAB) ? line.substring(TAB.length) : line
+                        ).join('\\n');
+                        this.value = beforeTab + outdented + afterTab;
+                        this.selectionStart = start;
+                        this.selectionEnd = start + outdented.length;
+                    } else {
+                        // Tab: indent
+                        const indented = selectedText.split('\\n').map(line => TAB + line).join('\\n');
+                        this.value = beforeTab + indented + afterTab;
+                        this.selectionStart = start;
+                        this.selectionEnd = start + indented.length;
+                    }
+                } else {
+                    // No selection: insert 2 spaces
+                    this.value = beforeTab + TAB + afterTab;
+                    this.selectionStart = this.selectionEnd = start + TAB.length;
+                }
+                this.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            // Handle Enter key for automatic indentation
+            if (e.key === 'Enter') {
+                const start = this.selectionStart;
+                const value = this.value;
+                const textBeforeCursor = value.substring(0, start);
+                const lastLine = textBeforeCursor.split('\\n').pop();
+                const indentation = lastLine.match(/^[ ]*/)[0];
+                
+                // Auto-indent on next line
+                if (lastLine.trimRight().endsWith(':')) {
+                    // Increase indent if line ends with ':'
+                    setTimeout(() => {
+                        const currentStart = this.selectionStart;
+                        this.value = this.value.substring(0, currentStart) + TAB + this.value.substring(currentStart);
+                        this.selectionStart = this.selectionEnd = currentStart + TAB.length;
+                        this.dispatchEvent(new Event('change', { bubbles: true }));
+                    }, 0);
+                } else if (indentation) {
+                    // Maintain current indentation
+                    setTimeout(() => {
+                        const currentStart = this.selectionStart;
+                        this.value = this.value.substring(0, currentStart) + indentation + this.value.substring(currentStart);
+                        this.selectionStart = this.selectionEnd = currentStart + indentation.length;
+                        this.dispatchEvent(new Event('change', { bubbles: true }));
+                    }, 0);
+                }
+            }
+        });
+    });
+});
+</script>
+""", unsafe_allow_html=True)
+
 st.title("🤖 Tutor Chatbot")
 st.caption("Ask Python questions and get guided explanations, examples, debugging help, and code evaluation.")
 
@@ -293,6 +385,10 @@ for message in st.session_state.messages.messages:
 
 prompt = st.chat_input("Ask a Python question...")
 if prompt:
+    # Always render user message immediately before processing
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
     if is_practice_request(prompt):
         append_message("user", prompt)
         try:
@@ -308,9 +404,6 @@ if prompt:
             )
             start_fallback_practice_question(fallback_exercises, prompt)
         st.rerun()
-
-    with st.chat_message("user"):
-        st.markdown(prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("Tutor is thinking..."):
