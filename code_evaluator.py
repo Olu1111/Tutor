@@ -6,28 +6,37 @@ import contextlib
 import io
 import multiprocessing as mp
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Set, Tuple
 
 SAFE_BUILTINS = {
     "abs": abs,
     "all": all,
     "any": any,
+    "bin": bin,
     "bool": bool,
     "dict": dict,
+    "divmod": divmod,
     "enumerate": enumerate,
     "filter": filter,
     "float": float,
+    "hex": hex,
     "int": int,
+    "isinstance": isinstance,
     "len": len,
     "list": list,
     "map": map,
     "max": max,
     "min": min,
+    "next": next,
+    "oct": oct,
+    "pow": pow,
     "print": print,
     "range": range,
+    "repr": repr,
     "reversed": reversed,
     "round": round,
     "set": set,
+    "slice": slice,
     "sorted": sorted,
     "str": str,
     "sum": sum,
@@ -36,7 +45,17 @@ SAFE_BUILTINS = {
     "Exception": Exception,
     "ValueError": ValueError,
     "TypeError": TypeError,
+    "IndexError": IndexError,
 }
+
+SAFE_METHODS_BY_TYPE = {
+    "list": {"append", "clear", "copy", "count", "extend", "index", "insert", "pop", "remove", "reverse", "sort"},
+    "tuple": {"count", "index"},
+    "dict": {"clear", "copy", "get", "items", "keys", "pop", "popitem", "setdefault", "update", "values"},
+    "set": {"add", "clear", "copy", "difference", "discard", "intersection", "isdisjoint", "issubset", "issuperset", "pop", "remove", "union"},
+}
+
+SAFE_METHOD_NAMES: Set[str] = set().union(*SAFE_METHODS_BY_TYPE.values())
 
 FORBIDDEN_NAMES = {
     "__import__",
@@ -189,12 +208,37 @@ def load_source_from_file(file_path: Path) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def _build_parent_map(tree: ast.AST) -> Dict[ast.AST, ast.AST]:
+    parents: Dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _is_allowed_method_call(node: ast.Attribute, parents: Dict[ast.AST, ast.AST]) -> bool:
+    if node.attr.startswith("__") or node.attr not in SAFE_METHOD_NAMES:
+        return False
+
+    parent = parents.get(node)
+    if not isinstance(parent, ast.Call) or parent.func is not node:
+        return False
+
+    base = node.value
+    if isinstance(base, ast.Name):
+        return base.id not in FORBIDDEN_NAMES
+
+    return isinstance(base, (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Subscript, ast.Call))
+
+
 def _validate_ast(tree: ast.AST) -> None:
+    parents = _build_parent_map(tree)
     for node in ast.walk(tree):
         if isinstance(node, FORBIDDEN_NODE_TYPES):
             raise ValueError(f"{type(node).__name__} is not allowed in the evaluator.")
         if isinstance(node, ast.Attribute):
-            raise ValueError("Attribute access is not allowed in the evaluator.")
+            if not _is_allowed_method_call(node, parents):
+                raise ValueError("Only a limited set of safe collection method calls are allowed in the evaluator.")
         if isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             raise ValueError(f"Use of '{node.id}' is not allowed.")
         if isinstance(node, ast.Call):
@@ -202,7 +246,8 @@ def _validate_ast(tree: ast.AST) -> None:
             if isinstance(call_target, ast.Name) and call_target.id in FORBIDDEN_NAMES:
                 raise ValueError(f"Call to '{call_target.id}' is not allowed.")
             if isinstance(call_target, ast.Attribute):
-                raise ValueError("Method calls are not allowed in the evaluator.")
+                if not _is_allowed_method_call(call_target, parents):
+                    raise ValueError("Only safe collection method calls are allowed in the evaluator.")
 
 
 def _parse_and_validate(source: str) -> ast.AST:

@@ -37,5 +37,6 @@ The sidebar also shows conversation memory, topic counts, confirmations, and str
 
 Open the `Code evaluator` tab to paste student code and run it against a small set of guarded practice tests.
 The evaluator uses AST checks, a restricted built-in environment, and a short timeout to reduce risk.
+It supports common numeric and sequence helpers such as `sorted`, `min`, `max`, `sum`, `pow`, and `divmod`, plus a small whitelist of safe collection methods like list `append`, `pop`, `sort`, and dict `get`.
 
 Note: this is a conservative safety layer, not a perfect sandbox. Avoid using it for untrusted production code.
